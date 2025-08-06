@@ -72,9 +72,28 @@ Before setting up this extractor, you need to:
    
    **Note:** Credentials are now loaded from `credentials.py` file. Replace `USERNAME` with your actual username.
    
+   **Cleanup Option:** To delete existing time series before creating new ones, add the `--cleanup` flag:
+   ```bash
+   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET --token_url CDF_TOKEN_URL -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian --extraction_pipeline extractors/wordfeud-USERNAME --cleanup
+   ```
+   
    **Board Configuration Options:**
    - **Board Types**: `BoardNormal` (default), `BoardRandom`
    - **Rule Sets**: `RuleSetNorwegian` (default), `RuleSetAmerican`, `RuleSetDanish`, `RuleSetDutch`, `RuleSetEnglish`, `RuleSetFrench`, `RuleSetSpanish`, `RuleSetSwedish`
+
+   **Available Rule Sets:**
+   - `RuleSetAmerican` - American English rules
+   - `RuleSetDanish` - Danish rules
+   - `RuleSetDutch` - Dutch rules
+   - `RuleSetEnglish` - English rules
+   - `RuleSetFrench` - French rules
+   - `RuleSetNorwegian` - Norwegian rules (default)
+   - `RuleSetSpanish` - Spanish rules
+   - `RuleSetSwedish` - Swedish rules
+
+   **Board Types:**
+   - `BoardNormal` - Standard board layout (default)
+   - `BoardRandom` - Randomized board layout
 10. Create a zip file for CDF function deployment:
     ```bash
     # The zip file includes the Wordfeud API code directly
@@ -112,6 +131,31 @@ If you need to backfill data, you may call the Cognite function for the extracto
 
 **Note:** Replace `USERNAME` with your actual username (e.g., "your-username").
 
+## Command Line Arguments
+
+The extractor supports the following command line arguments:
+
+### Required Arguments
+- `-c, --client_id`: CDF OIDC client ID
+- `-k, --key`: CDF OIDC client secret
+- `-p, --project`: CDF project name
+
+### IDP Configuration (choose one)
+- `-t, --tenant_id`: Azure AD tenant ID (for Azure AD)
+- `--token_url`: Token URL (for other IDPs)
+
+### Optional Arguments
+- `-b, --base_url`: CDF cluster base URL (default: https://api.cognitedata.com)
+- `-i, --init`: Initialize time series and extraction pipeline (default: False)
+- `--cleanup`: Delete existing time series before creating new ones (requires --init)
+- `-d, --dataset`: Dataset ID from CDF
+- `-a, --admin_security_category`: Security category ID
+- `--extraction_pipeline`: External ID for extraction pipeline (default: extractors/wordfeud-USERNAME)
+- `--board_type`: Wordfeud board type - BoardNormal or BoardRandom (default: BoardNormal)
+- `--rule_set`: Wordfeud rule set/language (default: RuleSetNorwegian)
+- `-s, --start_time`: Begin timestamp in milliseconds (default: one week ago)
+- `-e, --end_time`: End timestamp in milliseconds (default: now)
+
 ## Data Structure
 
 The extractor will create the following time series in CDF (where USERNAME is your configured username):
@@ -123,7 +167,63 @@ The extractor will create the following time series in CDF (where USERNAME is yo
 - `WORDFEUD/USERNAME/current_streak` - Wordfeud Current Streak - USERNAME (current winning/losing streak)
 - `WORDFEUD/USERNAME/best_rating` - Wordfeud Best Rating - USERNAME (best rating achieved)
 
+**Features:**
+- **Step Charts**: All time series are configured as step charts (`is_step=True`) for better visualization of discrete changes
+- **Game-Based Datapoints**: Datapoints are created only when games are completed, not on every extractor run
+- **Accurate Timestamps**: Uses game finish timestamps instead of extractor run timestamps
+- **Metadata**: Each datapoint includes metadata about the game (game ID, result, opponent, rating change)
+- **Rating Tracking**: Uses the Wordfeud API's per-game rating information for accurate rating changes
+
+**How It Works:**
+1. **Extractor runs every 20 minutes** but only creates datapoints when games are completed
+2. **Checks for new completed games** since the last datapoint was created
+3. **Uses Wordfeud API's rating data** to get the exact rating after each game
+4. **Creates datapoints with game metadata** including rating change, opponent, and game result
+5. **Uses step chart visualization** to show discrete changes rather than continuous lines
+
+**Datapoint Metadata:**
+Each datapoint includes metadata with the following information:
+- `game_id`: The Wordfeud game ID
+- `result`: Game result (won/lost)
+- `opponent`: Opponent's username
+- `rating_delta`: Rating change for this game
+- `ruleset`: Game rule set used
+- `board`: Board type used
+
 **Note:** Wordfeud credentials are stored securely in the CDF function secrets, not in time series data.
+
+## Cleanup and Fresh Start
+
+The extractor includes a cleanup feature to delete existing time series before creating new ones:
+
+### Cleanup Process
+1. **Lists existing time series** for the specified username
+2. **Shows time series details** (name and external ID)
+3. **Requests user confirmation** before deletion
+4. **Deletes only the time series** that will be recreated
+5. **Handles cases** where no time series exist
+
+### Usage
+Add the `--cleanup` flag to the initialization command:
+```bash
+python3 handler.py -c CLIENT_ID -k CLIENT_SECRET --token_url TOKEN_URL -p PROJECT -b BASE_URL -i True -d DATASET_ID --cleanup
+```
+
+### Example Output
+```
+🧹 Cleanup mode: Checking for existing time series for user 'epistel'...
+Found 6 existing time series for user 'epistel':
+  - Wordfeud Rating - epistel (WORDFEUD/epistel/rating)
+  - Wordfeud Games Played - epistel (WORDFEUD/epistel/games_played)
+  - Wordfeud Games Won - epistel (WORDFEUD/epistel/games_won)
+  - Wordfeud Win Rate - epistel (WORDFEUD/epistel/win_rate)
+  - Wordfeud Current Streak - epistel (WORDFEUD/epistel/current_streak)
+  - Wordfeud Best Rating - epistel (WORDFEUD/epistel/best_rating)
+
+❓ Do you want to delete these time series? (yes/no): yes
+✅ Successfully deleted existing time series
+✅ Cleanup completed successfully
+```
 
 ## Credential Management
 
@@ -166,4 +266,7 @@ The extractor supports different identity provider (IDP) configurations:
 - For Azure AD: Check that your tenant ID is correct and the application has proper permissions
 - For other IDPs: Verify that your token URL is correct and the application is properly configured
 - For rate limiting issues, the extractor includes built-in retry logic with exponential backoff
-- If the Wordfeud API package is not found, ensure it's properly installed: `pip install wordfeud-api` 
+- If the Wordfeud API package is not found, ensure it's properly installed: `pip install wordfeud-api`
+- If datapoints are not being created, check that games have been completed since the last run
+- If rating values seem incorrect, the extractor now uses per-game rating data from the Wordfeud API
+- For cleanup issues, ensure you have proper permissions to delete time series in CDF 

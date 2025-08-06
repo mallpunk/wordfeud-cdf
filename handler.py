@@ -37,12 +37,12 @@ GLOBAL_CLIENT = None
 def create_time_series(client, dataset_id, username):
     """Create time series for Wordfeud data"""
     time_series = [
-        TimeSeries(name=f'Wordfeud Rating - {username}', external_id=f'WORDFEUD/{username}/rating', unit='rating'),
-        TimeSeries(name=f'Wordfeud Games Played - {username}', external_id=f'WORDFEUD/{username}/games_played', unit='count'),
-        TimeSeries(name=f'Wordfeud Games Won - {username}', external_id=f'WORDFEUD/{username}/games_won', unit='count'),
-        TimeSeries(name=f'Wordfeud Win Rate - {username}', external_id=f'WORDFEUD/{username}/win_rate', unit='percentage'),
-        TimeSeries(name=f'Wordfeud Current Streak - {username}', external_id=f'WORDFEUD/{username}/current_streak', unit='count'),
-        TimeSeries(name=f'Wordfeud Best Rating - {username}', external_id=f'WORDFEUD/{username}/best_rating', unit='rating')
+        TimeSeries(name=f'Wordfeud Rating - {username}', external_id=f'WORDFEUD/{username}/rating', unit='rating', is_step=True),
+        TimeSeries(name=f'Wordfeud Games Played - {username}', external_id=f'WORDFEUD/{username}/games_played', unit='count', is_step=True),
+        TimeSeries(name=f'Wordfeud Games Won - {username}', external_id=f'WORDFEUD/{username}/games_won', unit='count', is_step=True),
+        TimeSeries(name=f'Wordfeud Win Rate - {username}', external_id=f'WORDFEUD/{username}/win_rate', unit='percentage', is_step=True),
+        TimeSeries(name=f'Wordfeud Current Streak - {username}', external_id=f'WORDFEUD/{username}/current_streak', unit='count', is_step=True),
+        TimeSeries(name=f'Wordfeud Best Rating - {username}', external_id=f'WORDFEUD/{username}/best_rating', unit='rating', is_step=True)
     ]
     
     for ts in time_series:
@@ -52,6 +52,47 @@ def create_time_series(client, dataset_id, username):
             client.time_series.create(ts)
         except CogniteDuplicatedError as err:
             print(f'{ts.external_id} already exists')
+
+def delete_existing_timeseries(client, username):
+    """Delete existing time series for the given username"""
+    external_ids = [
+        f'WORDFEUD/{username}/rating',
+        f'WORDFEUD/{username}/games_played',
+        f'WORDFEUD/{username}/games_won',
+        f'WORDFEUD/{username}/win_rate',
+        f'WORDFEUD/{username}/current_streak',
+        f'WORDFEUD/{username}/best_rating'
+    ]
+    
+    existing_timeseries = []
+    for external_id in external_ids:
+        try:
+            ts = client.time_series.retrieve(external_id=external_id)
+            existing_timeseries.append(ts)
+        except Exception:
+            # Time series doesn't exist, skip
+            pass
+    
+    if existing_timeseries:
+        print(f"Found {len(existing_timeseries)} existing time series for user '{username}':")
+        for ts in existing_timeseries:
+            print(f"  - {ts.name} ({ts.external_id})")
+        
+        response = input(f"\n❓ Do you want to delete these time series? (yes/no): ")
+        if response.lower() == 'yes':
+            try:
+                client.time_series.delete(external_id=[ts.external_id for ts in existing_timeseries])
+                print("✅ Successfully deleted existing time series")
+                return True
+            except Exception as e:
+                print(f"❌ Error deleting time series: {e}")
+                return False
+        else:
+            print("❌ Deletion cancelled")
+            return False
+    else:
+        print(f"✅ No existing time series found for user '{username}'")
+        return True
 
 def create_extraction_pipeline(client, extraction_pipeline, dataset_id, username):
     """Create extraction pipeline for Wordfeud data"""
@@ -74,8 +115,23 @@ def report_extraction_pipeline_run(client, extraction_pipeline, status='success'
         extpiperun.message = message
     client.extraction_pipelines.runs.create(extpiperun)
 
-def get_wordfeud_data(wordfeud_client, start_time, end_time):
-    """Fetch Wordfeud data for the specified time range"""
+def get_latest_datapoint(client, external_id):
+    """Get the latest datapoint from a time series"""
+    try:
+        # Get the latest datapoint
+        datapoints = client.time_series.data.retrieve_latest(
+            external_id=external_id,
+            before=0  # Get the most recent datapoint
+        )
+        if datapoints and len(datapoints) > 0:
+            return datapoints[0]
+        return None
+    except Exception as e:
+        print(f"Could not retrieve latest datapoint for {external_id}: {e}")
+        return None
+
+def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time):
+    """Fetch Wordfeud data and only create datapoints for completed games"""
     datapoints = {
         'rating': [],
         'games_played': [],
@@ -90,30 +146,160 @@ def get_wordfeud_data(wordfeud_client, start_time, end_time):
         status = wordfeud_client.get_status()
         current_time = int(time.time() * 1000)
         
-        # Get current rating if available
+        # Get current rating
         try:
             rating_data = wordfeud_client.get_current_rating()
-            if rating_data and 'rating' in rating_data:
-                datapoints['rating'].append((current_time, rating_data['rating']))
-                datapoints['best_rating'].append((current_time, rating_data.get('best_rating', rating_data['rating'])))
+            if not rating_data or 'rating' not in rating_data:
+                print("No rating data available")
+                return datapoints
         except Exception as e:
             print(f"Could not retrieve rating data: {e}")
+            return datapoints
         
-        # Get games data
-        games = wordfeud_client.get_games()
-        if games:
-            total_games = len(games)
-            won_games = sum(1 for game in games if game.get('result') == 'won')
-            win_rate = (won_games / total_games * 100) if total_games > 0 else 0
-            
-            datapoints['games_played'].append((current_time, total_games))
-            datapoints['games_won'].append((current_time, won_games))
-            datapoints['win_rate'].append((current_time, win_rate))
-            
-            # Calculate current streak (simplified - would need more detailed game history)
-            datapoints['current_streak'].append((current_time, 0))  # Placeholder
+        current_rating = rating_data['rating']
+        current_best_rating = rating_data.get('best_rating', current_rating)
         
-        print(f"Successfully retrieved Wordfeud data: {len(datapoints['rating'])} rating points")
+        # Get the latest stored rating to compare
+        rating_external_id = f'WORDFEUD/{username}/rating'
+        latest_rating_datapoint = get_latest_datapoint(client, rating_external_id)
+        
+        if latest_rating_datapoint:
+            last_rating = latest_rating_datapoint.value
+            last_timestamp = latest_rating_datapoint.timestamp
+            
+            # Get games with rating information (finished games)
+            games_with_ratings = wordfeud_client.get_ratings()
+            if games_with_ratings:
+                # Find games that were completed after the last datapoint
+                new_rating_games = []
+                for game in games_with_ratings:
+                    if game.get('rating') is not None and game.get('end_game'):
+                        game_finished_time = int(game['end_game']) * 1000  # Convert to milliseconds
+                        if game_finished_time > last_timestamp:
+                            new_rating_games.append(game)
+                
+                if new_rating_games:
+                    # Sort games by finish time to process them chronologically
+                    new_rating_games.sort(key=lambda g: int(g['end_game']))
+                    
+                    print(f"Found {len(new_rating_games)} new completed games")
+                    
+                    # Create datapoint for each completed game (regardless of rating change)
+                    for game in new_rating_games:
+                        game_finished_time = int(game['end_game']) * 1000
+                        game_rating = game.get('rating')
+                        rating_delta = game.get('rating_delta', 0)
+                        
+                        print(f"Game {game.get('id')}: Rating {game_rating} (change: {rating_delta}) at {game['end_game']}")
+                        
+                        # Store rating datapoint with game metadata
+                        datapoints['rating'].append({
+                            'timestamp': game_finished_time,
+                            'value': game_rating,
+                            'metadata': {
+                                'game_id': game.get('id', 'unknown'),
+                                'result': game.get('result', 'unknown'),
+                                'opponent': game.get('opponent', 'unknown'),
+                                'rating_delta': rating_delta,
+                                'ruleset': game.get('ruleset'),
+                                'board': game.get('board')
+                            }
+                        })
+                        
+                        # Update other metrics based on this game
+                        # Get current total games count
+                        all_games = wordfeud_client.get_games()
+                        if all_games:
+                            total_games = len(all_games)
+                            won_games = sum(1 for g in all_games if g.get('result') == 'won')
+                            win_rate = (won_games / total_games * 100) if total_games > 0 else 0
+                            
+                            datapoints['games_played'].append({
+                                'timestamp': game_finished_time,
+                                'value': total_games,
+                                'metadata': {
+                                    'game_id': game.get('id', 'unknown'),
+                                    'result': game.get('result', 'unknown'),
+                                    'rating_delta': rating_delta
+                                }
+                            })
+                            
+                            datapoints['games_won'].append({
+                                'timestamp': game_finished_time,
+                                'value': won_games,
+                                'metadata': {
+                                    'game_id': game.get('id', 'unknown'),
+                                    'result': game.get('result', 'unknown'),
+                                    'rating_delta': rating_delta
+                                }
+                            })
+                            
+                            datapoints['win_rate'].append({
+                                'timestamp': game_finished_time,
+                                'value': win_rate,
+                                'metadata': {
+                                    'game_id': game.get('id', 'unknown'),
+                                    'result': game.get('result', 'unknown'),
+                                    'rating_delta': rating_delta
+                                }
+                            })
+                            
+                            # Update best rating if this game improved it
+                            if game_rating > last_rating:
+                                datapoints['best_rating'].append({
+                                    'timestamp': game_finished_time,
+                                    'value': game_rating,
+                                    'metadata': {
+                                        'game_id': game.get('id', 'unknown'),
+                                        'result': game.get('result', 'unknown'),
+                                        'rating_delta': rating_delta
+                                    }
+                                })
+                else:
+                    print("No new completed games found")
+            else:
+                print("No games with rating information available")
+        else:
+            # First run - create initial datapoint
+            print(f"Creating initial datapoint with rating: {current_rating}")
+            datapoints['rating'].append({
+                'timestamp': current_time,
+                'value': current_rating,
+                'metadata': {'initial': True}
+            })
+            
+            datapoints['best_rating'].append({
+                'timestamp': current_time,
+                'value': current_best_rating,
+                'metadata': {'initial': True}
+            })
+            
+            # Get initial games data
+            games = wordfeud_client.get_games()
+            if games:
+                total_games = len(games)
+                won_games = sum(1 for game in games if game.get('result') == 'won')
+                win_rate = (won_games / total_games * 100) if total_games > 0 else 0
+                
+                datapoints['games_played'].append({
+                    'timestamp': current_time,
+                    'value': total_games,
+                    'metadata': {'initial': True}
+                })
+                
+                datapoints['games_won'].append({
+                    'timestamp': current_time,
+                    'value': won_games,
+                    'metadata': {'initial': True}
+                })
+                
+                datapoints['win_rate'].append({
+                    'timestamp': current_time,
+                    'value': win_rate,
+                    'metadata': {'initial': True}
+                })
+        
+        print(f"Successfully processed Wordfeud data: {sum(len(d) for d in datapoints.values())} new datapoints")
         
     except Exception as e:
         print(f"Error fetching Wordfeud data: {e}")
@@ -121,13 +307,34 @@ def get_wordfeud_data(wordfeud_client, start_time, end_time):
     return datapoints
 
 def store_wordfeud_data(client, data, username):
-    """Store Wordfeud data in CDF"""
+    """Store Wordfeud data in CDF with metadata"""
     ts_point_list = []
     
     for metric, datapoints in data.items():
         if datapoints:
             external_id = f'WORDFEUD/{username}/{metric}'
-            ts_point_list.append({'externalId': external_id, 'datapoints': datapoints})
+            
+            # Convert datapoints to CDF format
+            cdf_datapoints = []
+            for dp in datapoints:
+                if isinstance(dp, dict):
+                    # New format with metadata
+                    cdf_datapoint = {
+                        'timestamp': dp['timestamp'],
+                        'value': dp['value']
+                    }
+                    if 'metadata' in dp:
+                        cdf_datapoint['metadata'] = dp['metadata']
+                    cdf_datapoints.append(cdf_datapoint)
+                else:
+                    # Legacy format (timestamp, value)
+                    cdf_datapoints.append({'timestamp': dp[0], 'value': dp[1]})
+            
+            if cdf_datapoints:
+                ts_point_list.append({
+                    'externalId': external_id, 
+                    'datapoints': cdf_datapoints
+                })
     
     if ts_point_list:
         client.time_series.data.insert_multiple(ts_point_list)
@@ -184,7 +391,7 @@ def handle(data, client, secrets):
         print(f'Starting Wordfeud data extraction from {start_date} to {end_date}')
 
         # Get and store data
-        wordfeud_data = get_wordfeud_data(wordfeud_client, start_time, end_time)
+        wordfeud_data = get_wordfeud_data(wordfeud_client, client, username, start_time, end_time)
         
         if any(wordfeud_data.values()):
             store_wordfeud_data(client, wordfeud_data, username)
@@ -230,6 +437,8 @@ if __name__ == "__main__":
         '-e', '--end_time', type=int, help='End at this UTC unix timestamp in ms. Defaults to now.', default=-1)    
     parser.add_argument(
         '-i', '--init', type=bool, help='Create necessary time series and extraction pipeline, but do not do anything else.', default=False)
+    parser.add_argument(
+        '--cleanup', action='store_true', help='Delete existing time series before creating new ones (requires --init)')
     parser.add_argument(
         '-d', '--dataset', type=int, help='Dataset ID from Cognite Data Fusion', default=-1)
     parser.add_argument(
@@ -283,6 +492,14 @@ if __name__ == "__main__":
             print("❌ Error: USERNAME not found in credentials.py")
             print("Please add USERNAME to your credentials.py file for local initialization")
             sys.exit(1)
+        
+        # Handle cleanup if requested
+        if args.cleanup:
+            print(f"🧹 Cleanup mode: Checking for existing time series for user '{init_username}'...")
+            if not delete_existing_timeseries(client, init_username):
+                print("❌ Cleanup failed or was cancelled. Exiting.")
+                sys.exit(1)
+            print("✅ Cleanup completed successfully")
         
         create_time_series(client, args.dataset, init_username)
         create_extraction_pipeline(client, args.extraction_pipeline, args.dataset, init_username)
