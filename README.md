@@ -62,19 +62,22 @@ Before setting up this extractor, you need to:
    
    **For Azure AD:**
    ```bash
-   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET -t CDF_AD_TENANT_ID -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian --extraction_pipeline extractors/wordfeud-USERNAME
+   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET -t CDF_AD_TENANT_ID -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian
    ```
    
    **For other IDPs:**
    ```bash
-   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET --token_url CDF_TOKEN_URL -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian --extraction_pipeline extractors/wordfeud-USERNAME
+   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET --token_url CDF_TOKEN_URL -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian
    ```
    
-   **Note:** Credentials are now loaded from `credentials.py` file. Replace `USERNAME` with your actual username.
+   **Note:** 
+   - Credentials are loaded from `credentials.py` file
+   - Extraction pipeline is automatically generated as `extractors/wordfeud-{username}` from your credentials
+   - You can override the extraction pipeline with `--extraction_pipeline custom-pipeline-id` if needed
    
    **Cleanup Option:** To delete existing time series before creating new ones, add the `--cleanup` flag:
    ```bash
-   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET --token_url CDF_TOKEN_URL -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian --extraction_pipeline extractors/wordfeud-USERNAME --cleanup
+   python3 handler.py -c EXTRACTOR_CLIENT_ID -k EXTRACTOR_CLIENT_SECRET --token_url CDF_TOKEN_URL -p CDF_PROJECT -b CDF_CLUSTER_BASE_URL -i True -d DATA_SET_ID -a SECURITY_CATEGORY_ID --board_type BoardNormal --rule_set RuleSetNorwegian --cleanup
    ```
    
    **Board Configuration Options:**
@@ -110,13 +113,14 @@ Before setting up this extractor, you need to:
 12. Set up a schedule for the function.
     - Set cron expression to every 20 minutes `*/20 * * * *`
     - Set Client ID and Client Secret to EXTRACTOR_CLIENT_ID and EXTRACTOR_CLIENT_SECRET from step 6
-    - Set data to:
+    - **Data configuration is optional** - the function will auto-generate the extraction pipeline name from the `wordfeud-user` secret
+    - If you want to specify a custom extraction pipeline, set data to:
     ```json
     {
-      "extraction-pipeline": "extractors/wordfeud-USERNAME"
+      "extraction-pipeline": "extractors/wordfeud-custom"
     }
     ```
-    **Note:** Replace `USERNAME` with your actual username (e.g., "your-username").
+    **Note:** The function automatically uses `extractors/wordfeud-{username}` based on your `wordfeud-user` secret.
 
 ## Backfill
 
@@ -124,12 +128,18 @@ If you need to backfill data, you may call the Cognite function for the extracto
 
 ```json
 {
-  "extraction-pipeline": "extractors/wordfeud-USERNAME",
   "start-time": UNIX_TIMESTAMP_IN_MS
 }
 ```
 
-**Note:** Replace `USERNAME` with your actual username (e.g., "your-username").
+**Note:** The extraction pipeline is automatically generated from your `wordfeud-user` secret. If you need a custom pipeline, you can specify it explicitly:
+
+```json
+{
+  "extraction-pipeline": "extractors/wordfeud-custom",
+  "start-time": UNIX_TIMESTAMP_IN_MS
+}
+```
 
 ## Command Line Arguments
 
@@ -150,7 +160,7 @@ The extractor supports the following command line arguments:
 - `--cleanup`: Delete existing time series before creating new ones (requires --init)
 - `-d, --dataset`: Dataset ID from CDF
 - `-a, --admin_security_category`: Security category ID
-- `--extraction_pipeline`: External ID for extraction pipeline (default: extractors/wordfeud-USERNAME)
+- `--extraction_pipeline`: External ID for extraction pipeline (auto-generated from username if not specified)
 - `--board_type`: Wordfeud board type - BoardNormal or BoardRandom (default: BoardNormal)
 - `--rule_set`: Wordfeud rule set/language (default: RuleSetNorwegian)
 - `-s, --start_time`: Begin timestamp in milliseconds (default: one week ago)
@@ -236,6 +246,16 @@ The extractor handles credentials and board configuration differently depending 
 
 This approach ensures credentials are never stored in CDF time series while still allowing local testing and initialization.
 
+## Extraction Pipeline Management
+
+The extractor automatically handles extraction pipeline naming:
+
+- **Local Development**: Auto-generates `extractors/wordfeud-{username}` from `credentials.py`
+- **CDF Function**: Auto-generates `extractors/wordfeud-{username}` from `wordfeud-user` secret
+- **Override Option**: You can specify a custom extraction pipeline with `--extraction_pipeline` or in function data
+
+This ensures consistent naming across environments while allowing customization when needed.
+
 ## Deployment Package
 
 The `handler.zip` file includes all necessary dependencies:
@@ -269,4 +289,6 @@ The extractor supports different identity provider (IDP) configurations:
 - If the Wordfeud API package is not found, ensure it's properly installed: `pip install wordfeud-api`
 - If datapoints are not being created, check that games have been completed since the last run
 - If rating values seem incorrect, the extractor now uses per-game rating data from the Wordfeud API
-- For cleanup issues, ensure you have proper permissions to delete time series in CDF 
+- For cleanup issues, ensure you have proper permissions to delete time series in CDF
+- If extraction pipeline reporting fails, check that the pipeline exists and the function has proper permissions
+- For auto-generated pipeline naming issues, verify that the `wordfeud-user` secret is correctly configured 
