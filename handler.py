@@ -120,8 +120,7 @@ def get_latest_datapoint(client, external_id):
     try:
         # Get the latest datapoint
         datapoints = client.time_series.data.retrieve_latest(
-            external_id=external_id,
-            before=0  # Get the most recent datapoint
+            external_id=external_id
         )
         if datapoints and len(datapoints) > 0:
             return datapoints[0]
@@ -130,7 +129,7 @@ def get_latest_datapoint(client, external_id):
         print(f"Could not retrieve latest datapoint for {external_id}: {e}")
         return None
 
-def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time):
+def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, board_type=None, rule_set=None):
     """Fetch Wordfeud data and only create datapoints for completed games"""
     datapoints = {
         'rating': [],
@@ -142,11 +141,13 @@ def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time):
     }
     
     try:
-        # Get games with rating information (finished games)
-        games_with_ratings = wordfeud_client.get_ratings()
+        # Get games with rating information (finished games) - filtered by board type and rule set
+        games_with_ratings = wordfeud_client.get_ratings(ruleset=rule_set, board_type=board_type)
         if not games_with_ratings:
-            print("No games with rating information available")
+            print(f"No games with rating information available for board_type={board_type}, rule_set={rule_set}")
             return datapoints
+        
+        print(f"Found {len(games_with_ratings)} games with ratings for board_type={board_type}, rule_set={rule_set}")
         
         # Get the latest stored rating to determine the last processed timestamp
         rating_external_id = f'WORDFEUD/{username}/rating'
@@ -580,7 +581,8 @@ def handle(data, client, secrets):
         print(f'Starting Wordfeud data extraction from {start_date} to {end_date}')
 
         # Get and store data
-        wordfeud_data = get_wordfeud_data(wordfeud_client, client, username, start_time, end_time)
+        wordfeud_data = get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, 
+                                        board_type=wordfeud_client.board_type, rule_set=wordfeud_client.rule_set)
         
         if any(wordfeud_data.values()):
             store_wordfeud_data(client, wordfeud_data, username)
