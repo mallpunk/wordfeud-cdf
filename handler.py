@@ -153,11 +153,24 @@ def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, b
         rating_external_id = f'WORDFEUD/{username}/rating'
         latest_rating_datapoint = get_latest_datapoint(client, rating_external_id)
         
+        # Get the latest best rating to use as baseline for best rating tracking
+        best_rating_external_id = f'WORDFEUD/{username}/best_rating'
+        latest_best_rating_datapoint = get_latest_datapoint(client, best_rating_external_id)
+        
         if latest_rating_datapoint:
             # We have existing data - find new games since the last datapoint
             last_timestamp = latest_rating_datapoint.timestamp
             last_datapoint_date = datetime.utcfromtimestamp(last_timestamp/1000).strftime("%Y-%m-%d %H:%M:%S")
             print(f"Found latest datapoint in time series {rating_external_id}: timestamp={last_timestamp} ({last_datapoint_date}), value={latest_rating_datapoint.value}")
+            
+            # Set baseline for best rating tracking
+            if latest_best_rating_datapoint:
+                current_best_rating = latest_best_rating_datapoint.value
+                best_rating_date = datetime.utcfromtimestamp(latest_best_rating_datapoint.timestamp/1000).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"Found latest best rating datapoint: timestamp={latest_best_rating_datapoint.timestamp} ({best_rating_date}), value={current_best_rating}")
+            else:
+                current_best_rating = 0
+                print(f"No existing best rating datapoints found, starting baseline at 0")
             
             # Find games that were completed after the last datapoint
             new_rating_games = []
@@ -175,9 +188,7 @@ def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, b
                 
                 print(f"Found {len(new_rating_games)} new completed games")
                 print(f"Processing games for time series: WORDFEUD/{username}/rating")
-                
-                # Track the best rating as we process games
-                current_best_rating = latest_rating_datapoint.value
+                print(f"Best rating baseline: {current_best_rating}")
                 
                 # Create datapoint for each completed game (regardless of rating change)
                 for game in new_rating_games:
@@ -297,6 +308,15 @@ def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, b
         else:
             print(f"No existing datapoints found in time series {rating_external_id}")
             
+            # Set baseline for best rating tracking (even in first run)
+            if latest_best_rating_datapoint:
+                current_best_rating = latest_best_rating_datapoint.value
+                best_rating_date = datetime.utcfromtimestamp(latest_best_rating_datapoint.timestamp/1000).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"Found existing best rating datapoint: timestamp={latest_best_rating_datapoint.timestamp} ({best_rating_date}), value={current_best_rating}")
+            else:
+                current_best_rating = 0
+                print(f"No existing best rating datapoints found, starting baseline at 0")
+            
             # First run - check if there are any completed games to create initial datapoints
             completed_games = []
             for game in games_with_ratings:
@@ -308,9 +328,7 @@ def get_wordfeud_data(wordfeud_client, client, username, start_time, end_time, b
                 completed_games.sort(key=lambda g: int(g['updated']))
                 
                 print(f"First run: Found {len(completed_games)} completed games to create initial datapoints")
-                
-                # Track the best rating as we process games
-                current_best_rating = 0
+                print(f"Best rating baseline: {current_best_rating}")
                 
                 # Create datapoint for each completed game
                 for game in completed_games:
