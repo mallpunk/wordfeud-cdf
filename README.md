@@ -5,9 +5,9 @@ Connect your Wordfeud to CDF
 
 Before setting up this extractor, you need to:
 
-1. **Wordfeud API Package**: Install the Wordfeud API package:
+1. **Wordfeud API Package**: This script depends on the forked Wordfeud API from [https://github.com/mallpunk/Python-Wordfeud-API](https://github.com/mallpunk/Python-Wordfeud-API). Install the Wordfeud API package:
    ```bash
-   pip install wordfeud-api
+   pip install git+https://github.com/mallpunk/Python-Wordfeud-API.git
    ```
    Or if you have a local development version:
    ```bash
